@@ -1,0 +1,43 @@
+services:
+  db:
+    image: postgres:15-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: "user"
+      POSTGRES_PASSWORD: "password"
+      POSTGRES_DB: "chatbot_db"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  backend:
+    build: ./backend
+    restart: always
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: "postgresql://user:password@db:5432/chatbot_db"
+      OPENROUTER_API_KEY: "${OPENROUTER_API_KEY}"
+      MODEL_NAME: "tngtech/deepseek-r1t2-chimera:free"
+    ports:
+      - "8000:8000"
+
+  frontend:
+    build: ./frontend
+    restart: always
+    depends_on:
+      - backend
+    environment:
+      BACKEND_URL: "http://backend:8000"
+    ports:
+      - "8501:8501"
+
+volumes:
+  postgres_data:
