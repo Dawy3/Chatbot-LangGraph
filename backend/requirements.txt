@@ -1,8 +1,12 @@
 fastapi
-uvicorn
+uvicorn[standard]
+
 langchain-openai
 langgraph
 langgraph-checkpoint-postgres
+
 asyncpg
 pydantic
 python-dotenv
+psycopg2-binary
+

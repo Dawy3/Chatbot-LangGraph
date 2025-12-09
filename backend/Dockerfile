@@ -15,6 +15,9 @@ RUN pip install -r requirements.txt
 # Copy application code
 COPY chatbot_langgraph.py .
 
+# DON'T copy .env file - use Docker environment variables instead
+# If you have a .env, add it to .dockerignore
+
 # Expose port
 EXPOSE 8000
 

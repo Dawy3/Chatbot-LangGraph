@@ -54,9 +54,9 @@ class HistoryResponse(BaseModel):
     messages: List[MessageDto]
     
 # --- State Definition ---
-class AgentState(TypedDict):
+class State(TypedDict):
     # 'add_messages' handles deduplication and appending automatically
-    messages: Annotated[Sequence[BaseMessage], add_messages]
+    messages: Annotated[Sequence[BaseMessage], add_messages] 
 
 # --- Graph Construction ---
 def build_graph():
@@ -78,82 +78,45 @@ def build_graph():
     
     chain = prompt | llm
     
-    async def call_model(state: AgentState):
-        response = await chain.ainvoke(state)
-        return {"messages": [response]}
+    # 3. Define Node 
+    async def generate_response(state: State):
+        response = await chain.ainvoke(state["messages"])
+        return {"messages":[AIMessage(content=response.content)]}
     
-    # 3. Define Graph
-    workflow = StateGraph(AgentState)
-    workflow.add_node("chatbot", call_model)
-    workflow.add_edge(START, "chatbot")
-    workflow.add_edge("chatbot", END)
+    # 4. Define Edges (Simple Linear Flow)
+    graph = StateGraph(State)
+    graph.add_node("chatbot", generate_response)
+    graph.add_edge(START, "chatbot")
+    graph.add_edge("chatbot", END)
     
-    return workflow
+    return graph
     
 # --- FastAPI Lifespan (connection Management) ---
 @asynccontextmanager
-async def lifespan(app:FastAPI):
-    """
-    Manages the lifecycle of the Postgres connection pool and checkpointer.
-    """
+async def lifespan(app: FastAPI):
     logger.info("Starting up: Connecting to Database...")
     
-    # Initialize checkpointer directly with connection string
-    # AsyncPostgresSaver will manage its own connection pool internally
-    checkpointer = AsyncPostgresSaver.from_conn_string(DATABASE_URL)
-    
-    # Enter the context manager and keep it open for the app lifetime
-    checkpointer_ctx = checkpointer.__aenter__()
-    checkpointer_instance = await checkpointer_ctx
-    
     try:
-        # Ensure table exists
-        await checkpointer_instance.setup()
-        logger.info("Checkpointer setup complete")
-        
-        # Compile Graph WITH Checkpointer and store in app.state
-        workflow = build_graph()
-        app.state.graph = workflow.compile(checkpointer=checkpointer_instance)
-        app.state.checkpointer = checkpointer_instance
-        app.state.checkpointer_manager = checkpointer
-        
-        logger.info("Application startup complete")
-        
-        yield 
-        
+        async with AsyncPostgresSaver.from_conn_string(DATABASE_URL) as checkpointer:
+            await checkpointer.setup()
+            logger.info("Checkpointer setup complete")
+            
+            workflow = build_graph()
+            app.state.graph = workflow.compile(checkpointer=checkpointer)
+            
+            logger.info("Application startup complete")
+            yield
+            
+    except Exception as e:
+        logger.error(f"Failed to start application: {e}", exc_info=True)
+        raise
     finally:
-        logger.info("Shutting down: Closing Database connection...")
-        await checkpointer.__aexit__(None, None, None)
+        logger.info("Shutting down")
     
 app = FastAPI(title="LangGraph Chatbot API" , lifespan=lifespan)
 
 
 # --- Endpoints ---
-
-@app.post("/chat", response_model=ChatResponse)
-async def chat(request:ChatRequest):
-    """
-    Standard REST endpoint.
-    LangGraph automatically retrieves history, sends to OpenRouter, and save state.    
-    """
-    graph = app.state.graph
-    config = {"configurable": {"thread_id":request.session_id}}
-    
-    input_messages = HumanMessage(content=request.message)
-    
-    # Invoke the Graph
-    final_state = await graph.ainvoke(
-        {"messages":[input_messages]},
-        config = config
-    )
-    
-    ai_message = final_state["messages"][-1]
-    
-    return ChatResponse(
-        response= ai_message.content,
-        session_id= request.session_id
-    ) 
-    
 @app.websocket("/ws/chat/{session_id}")
 async def websocket_chat(websocket: WebSocket, session_id: str):
     """
@@ -195,32 +158,7 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
         logger.error(f"Websocket error: {e}")
         await websocket.close()
         
-@app.get("/conversation/{session_id}/history", response_model=HistoryResponse)
-async def get_history(session_id:str):
-    """
-    Retrieve history directly from LangGraph's Postgres state.
-    """
-    graph = app.state.graph
-    config = {"configurable": {"thread_id":session_id}}
-    
-    state_snapshot = await graph.aget_state(config)
-    
-    formatted_messages = []
-    if state_snapshot.values:
-        messages = state_snapshot.values.get("messages", [])
-        for msg in messages:
-            role = "user"
-            if isinstance(msg, AIMessage):
-                role = "assistant"
-            elif isinstance(msg, SystemMessage):
-                role = "system"
-                
-            formatted_messages.append(MessageDto(
-                role = role,
-                content = msg.content,
-                timestamp=str(datetime.now())
-            ))
-    return HistoryResponse(
-        session_id=session_id,
-        messages=formatted_messages
-    )
+        
+@app.get("/health")
+async def health_check():
+    return {"status": "healthy", "database": "connected"}

@@ -35,7 +35,7 @@ services:
     depends_on:
       - backend
     environment:
-      BACKEND_URL: "http://backend:8000"
+      WEBSOCKET_URL: "ws://backend:8000/ws/chat"
     ports:
       - "8501:8501"
 
