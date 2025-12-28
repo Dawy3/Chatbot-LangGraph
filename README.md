@@ -1,3 +1,6 @@
+
+![272a59d5dcb24116851519938d34d140-1766412196462](https://github.com/user-attachments/assets/8997fa69-bd85-448a-b5c7-f93f33b9c249)
+
 ## LangGraph Chatbot (OpenRouter + Streamlit)
 
 Full‑stack demo that streams AI chat replies over WebSockets, keeps multi‑turn memory in Postgres via LangGraph checkpoints, and ships with Docker Compose for one‑command local runs.
